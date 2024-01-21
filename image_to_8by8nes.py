@@ -95,6 +95,9 @@ def apply_template(test, matrix_2c02, hex_list):
 
     return final_image, palette
 
+
+
+
 def extend_string_array(input_array, target_shape):
     input_array = np.array(input_array, dtype=str)
     target_rows, target_cols = target_shape
@@ -237,10 +240,10 @@ def convert_to_hex(new_test, output_file):
         f.write(binary_data)
 
 
-test_image_path = r'C:\\assembly\\pythonscripts\\fireball.png'
-locy = 16
-locx = 16
-test = make_template(test_image_path,locx,locy)
+#test_image_path = r'C:\\assembly\\pythonscripts\\fireball.png'
+#locy = 32
+#locx = 30
+#test = make_template(test_image_path,locx,locy)
 
 image_path = r'C:\\assembly\\pythonscripts\\nes_2c02_colour_palette.png'
 locy = 4
@@ -250,11 +253,185 @@ hex_list = np.array([[f"${(i * locx + j):02X}" for j in range(locx)] for i in ra
 matrix_2c02 = make_template(image_path,locx,locy)
 
 # Apply the template palette to the test image
-new_test, palette = apply_template(test, matrix_2c02, hex_list)
-print(palette)
+#new_test, palette = apply_template(test, matrix_2c02, hex_list)
+#print(palette)
 
-output_file = r'output.chr'
-convert_to_hex(new_test, output_file)
+#output_file = r'output.chr'
+#convert_to_hex(new_test, output_file)
+
+
+
+def apply_hex(hex_values, matrix_2c02, hex_list):
+    data_lines = [line.strip().replace(".byte", "").replace(" ", "").split(",") for line in hex_values]
+    hex_values_clean = [[entry.upper() for entry in line] for line in data_lines]
+ 
+    colorv = []
+    for h in hex_values_clean:
+        for hh in h:    
+            for c, h2 in zip(matrix_2c02.reshape(matrix_2c02.shape[0]*matrix_2c02.shape[1],3),hex_list.flatten()):
+                if hh == h2:
+                    colorv.append(list(c))
+    
+    final_image = np.uint8(np.array(colorv)).reshape(len(colorv)//4,4,3)
+
+    num_blocks = final_image.shape[0] // 4
+    fig, axs = plt.subplots(num_blocks, 1, figsize=(6, 2*num_blocks))
+    titles = ["Background", "Sprites"]
+    for i in range(num_blocks):
+        axs[i].imshow(final_image[i*4:(i+1)*4])
+        axs[i].axis('off')  # Turn off axis for cleaner display
+        axs[i].set_title(titles[i])
+
+    plt.show()
+    
+    return final_image
+
+
+
+def plot_sprites(raw_data, xsize, ysize, bits, sprites_palettes):
+
+    data_lines = [line.strip().replace(".byte", "").split(",") for line in raw_data]
+    flags = [a[2].split('$')[1] for a in  data_lines]
+
+    binary_entries = [bin(int(entry, 16))[2:].zfill(8) for entry in flags]
+    flags_list = []
+    for binary_entry in binary_entries:
+        flags = {
+            'vflip': bool(int(binary_entry[7], 2)),
+            'hflip': bool(int(binary_entry[6], 2)),
+            'priority': bool(int(binary_entry[5], 2)),
+            'palette': int(binary_entry[1:3], 2)
+        }
+        flags_list.append(flags)
+    
+    palette_entries = [entry['palette'] for entry in flags_list]
+
+    processed_data = [[int(value.split('$')[1], 16) for value in line] for line in data_lines]
+    
+    sprites = np.uint8(np.zeros((ysize * bits, xsize * bits, 3)))
+
+    for line, entry in zip(processed_data, palette_entries):
+        x = line[-1]
+        y = line[0]
+        p = sprites_palettes[entry]
+        hb = bits//2
+        sprites[y:y+hb, x:x+hb] = p[0]
+        sprites[y+hb:y+bits, x:x+hb] = p[1]
+        sprites[y:y+hb, x+hb:x+bits] = p[2]
+        sprites[y+hb:y+bits, x+hb:x+bits] = p[3]
+        
+        
+    plt.imshow(sprites, cmap='gray', interpolation='none')
+    plt.title("Sprite Screen location + Palette")
+    plt.show()
+    
+    return sprites, flags_list
+
+def generate_background(initial, addresses, xsize, ysize, bits, attribute_table, background_palettes):
+        
+    nametable_address = int(initial.split('$')[1], 16)  # Assuming a default nametable address of $2000
+    offsets = [int(address.split('$')[1], 16) - nametable_address for address in addresses]
+
+    background = np.zeros((ysize * bits, xsize * bits))
+
+    for offset in offsets:
+        x_offset = offset // ysize
+        y_offset = offset % xsize
+        background[x_offset*bits:(x_offset+1)*bits, y_offset*bits:(y_offset+1)*bits] = 1
+        
+    plt.imshow(background, cmap='gray', interpolation='none')
+    plt.show()
+    
+    return background
+
+def convert_and_reverse(binary_str):
+    binary_chunks = [binary_str[i:i+2] for i in range(0, len(binary_str), 2)]
+    decimal_values = [int(chunk, 2) for chunk in binary_chunks[::-1]]
+    return decimal_values
+
+def process_attributes(initial, at, coloring):
+    attribute_table = np.zeros((8, 8))
+
+    attribute_address = int(initial.split('$')[1], 16)  # Assuming a default nametable address of $2000
+    offsets = [int(a.split('$')[1], 16) - attribute_address for a in at]
+
+    coloring_without_percent = [color[1:] for color in coloring]
+
+    organized_colors = [convert_and_reverse(binary_str) for binary_str in coloring_without_percent]
+
+    for offset in offsets:
+        x_offset = offset // 8
+        y_offset = offset % 8
+        attribute_table[x_offset:(x_offset + 1), y_offset:(y_offset + 1)] = 1
+
+    # Resize the array
+    scaled = np.array(cv2.resize(np.uint8(attribute_table*255.0), (0,0), fx=2, fy=2) > 100) * 1
+    soffsets = [a * 2 if 16 * 2 * (a // 8) == 0 else 16 * 2 * (a // 8) for a in offsets]
+
+    for so, c in zip(soffsets, organized_colors):
+        for i in range(scaled.shape[0]):
+            for j in range(scaled.shape[1]):
+                spot = j + i * scaled.shape[0]
+                if spot == so:
+                    scaled[i, j] = c[0]
+                    scaled[i, j+1] = c[1]
+                    scaled[i+1, j] = c[2]
+                    scaled[i+1, j+1] = c[3]
+
+    plt.imshow(scaled, cmap='gray', interpolation='none')
+    plt.show()
+    
+    resized = scaled[:-1,:]
+    
+    return resized
+
+
+hex_palette_values =   [".byte $0f, $12, $23, $27",
+                        ".byte $0f, $2b, $3c, $39",
+                        ".byte $0f, $0c, $07, $13",
+                        ".byte $0f, $19, $09, $29",
+                        ".byte $0f, $2d, $10, $15",
+                        ".byte $0f, $19, $09, $29",
+                        ".byte $0f, $19, $09, $29",
+                        ".byte $0f, $19, $09, $29"]
+
+#convert hex values into colour palettes
+fpalettes = apply_hex(hex_palette_values, matrix_2c02, hex_list)
+background_palettes = fpalettes[:4]
+sprites_palettes = fpalettes[4:]
+
+
+sprite_info = [
+    ".byte $70, $05, $00, $80",
+    ".byte $70, $06, $00, $88",
+    ".byte $78, $07, $00, $80",
+    ".byte $78, $08, $00, $88"
+]
+#shows where the background/sprites are being drawn
+xsize=32
+ysize=30
+bits=8
+
+sprites, flags_list = plot_sprites(sprite_info, xsize, ysize, bits, sprites_palettes)
+
+
+
+at = ["$23C2", "$23E0"]
+coloring = ["%01000000", "%00001100"]
+initial = "$23C0"
+attribute_table = process_attributes(initial, at, coloring)
+
+
+addresses = ["$206b", "$2157", "$2223", "$2352"]
+addresses2 = ["$2074", "$2143" ,"$215d" ,"$2173", "$222f" ,"$22f7"]
+addresses3 = ["$20f1", "$21a8", "$227a", "$2344", "$237c"]
+
+background_addresses = addresses + addresses2 + addresses3
+
+initial = "$2000"
+background = generate_background(initial, background_addresses, xsize, ysize, bits, attribute_table, background_palettes)
+
+
 
 
 
