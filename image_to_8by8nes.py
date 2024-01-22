@@ -32,8 +32,8 @@ def make_template(image_path,locx,locy):
         avgc.append(list(most_frequent_color))
     
     final = np.uint8(avgc).reshape(locy,locx,3)
-    plt.imshow(final)
-    plt.show()
+    #plt.imshow(final)
+    #plt.show()
 
     return final
 
@@ -240,29 +240,8 @@ def convert_to_hex(new_test, output_file):
         f.write(binary_data)
 
 
-#test_image_path = r'C:\\assembly\\pythonscripts\\fireball.png'
-#locy = 32
-#locx = 30
-#test = make_template(test_image_path,locx,locy)
-
-image_path = r'C:\\assembly\\pythonscripts\\nes_2c02_colour_palette.png'
-locy = 4
-locx = 16
-hex_list = np.array([[f"${(i * locx + j):02X}" for j in range(locx)] for i in range(locy)]).reshape(locy,locx)
-        
-matrix_2c02 = make_template(image_path,locx,locy)
-
-# Apply the template palette to the test image
-#new_test, palette = apply_template(test, matrix_2c02, hex_list)
-#print(palette)
-
-#output_file = r'output.chr'
-#convert_to_hex(new_test, output_file)
-
-
-
-def apply_hex(hex_values, matrix_2c02, hex_list):
-    data_lines = [line.strip().replace(".byte", "").replace(" ", "").split(",") for line in hex_values]
+def apply_hex(hex_palette_values, matrix_2c02, hex_list):
+    data_lines = [line.strip().replace(".byte", "").replace(" ", "").split(",") for line in hex_palette_values]
     hex_values_clean = [[entry.upper() for entry in line] for line in data_lines]
  
     colorv = []
@@ -271,9 +250,9 @@ def apply_hex(hex_values, matrix_2c02, hex_list):
             for c, h2 in zip(matrix_2c02.reshape(matrix_2c02.shape[0]*matrix_2c02.shape[1],3),hex_list.flatten()):
                 if hh == h2:
                     colorv.append(list(c))
+
     
     final_image = np.uint8(np.array(colorv)).reshape(len(colorv)//4,4,3)
-
     num_blocks = final_image.shape[0] // 4
     fig, axs = plt.subplots(num_blocks, 1, figsize=(6, 2*num_blocks))
     titles = ["Background", "Sprites"]
@@ -309,12 +288,14 @@ def plot_sprites(raw_data, xsize, ysize, bits, sprites_palettes):
     processed_data = [[int(value.split('$')[1], 16) for value in line] for line in data_lines]
     
     sprites = np.uint8(np.zeros((ysize * bits, xsize * bits, 3)))
-
+    
+    hb = bits//2
+    
     for line, entry in zip(processed_data, palette_entries):
         x = line[-1]
         y = line[0]
         p = sprites_palettes[entry]
-        hb = bits//2
+
         sprites[y:y+hb, x:x+hb] = p[0]
         sprites[y+hb:y+bits, x:x+hb] = p[1]
         sprites[y:y+hb, x+hb:x+bits] = p[2]
@@ -327,19 +308,28 @@ def plot_sprites(raw_data, xsize, ysize, bits, sprites_palettes):
     
     return sprites, flags_list
 
-def generate_background(initial, addresses, xsize, ysize, bits, attribute_table, background_palettes):
+def generate_background(initial_nametable, background_addresses, xsize, ysize, bits, attribute_table, background_palettes):
         
-    nametable_address = int(initial.split('$')[1], 16)  # Assuming a default nametable address of $2000
-    offsets = [int(address.split('$')[1], 16) - nametable_address for address in addresses]
+    nametable_address = int(initial_nametable.split('$')[1], 16)  # Assuming a default nametable address of $2000
+    offsets = [int(address.split('$')[1], 16) - nametable_address for address in background_addresses]
 
-    background = np.zeros((ysize * bits, xsize * bits))
+    background = np.uint8(np.zeros((ysize * bits, xsize * bits,3)))
+    
+    hb = bits//2
 
     for offset in offsets:
-        x_offset = offset // ysize
-        y_offset = offset % xsize
-        background[x_offset*bits:(x_offset+1)*bits, y_offset*bits:(y_offset+1)*bits] = 1
+        for i in range(background.shape[0]//bits):
+            for j in range(background.shape[1]//bits):
+                spot = j + i * background.shape[1]//bits
+                if spot == offset:
+                    p = background_palettes[attribute_table[i//2,j//2]]
+                    background[i*bits:i*bits+hb, j*bits:j*bits+hb] = p[0]
+                    background[i*bits+hb:i*bits+bits, j*bits:j*bits+hb] = p[1]
+                    background[i*bits:i*bits+hb, j*bits+hb:j*bits+bits] = p[2]
+                    background[i*bits+hb:i*bits+bits, j*bits+hb:j*bits+bits] = p[3]
         
     plt.imshow(background, cmap='gray', interpolation='none')
+    plt.title("Background Nametable + Attribute table")
     plt.show()
     
     return background
@@ -349,10 +339,10 @@ def convert_and_reverse(binary_str):
     decimal_values = [int(chunk, 2) for chunk in binary_chunks[::-1]]
     return decimal_values
 
-def process_attributes(initial, at, coloring):
+def process_attributes(initial_attribute, at, coloring):
     attribute_table = np.zeros((8, 8))
 
-    attribute_address = int(initial.split('$')[1], 16)  # Assuming a default nametable address of $2000
+    attribute_address = int(initial_attribute.split('$')[1], 16)  # Assuming a default nametable address of $2000
     offsets = [int(a.split('$')[1], 16) - attribute_address for a in at]
 
     coloring_without_percent = [color[1:] for color in coloring]
@@ -378,12 +368,32 @@ def process_attributes(initial, at, coloring):
                     scaled[i+1, j] = c[2]
                     scaled[i+1, j+1] = c[3]
 
-    plt.imshow(scaled, cmap='gray', interpolation='none')
-    plt.show()
+    #plt.imshow(scaled, cmap='gray', interpolation='none')
+    #plt.show()
     
     resized = scaled[:-1,:]
     
     return resized
+
+
+#test_image_path = r'C:\\assembly\\pythonscripts\\fireball.png'
+#locy = 32
+#locx = 30
+#test = make_template(test_image_path,locx,locy)
+
+image_path = r'C:\assembly\NES-game-dev-main\\nes_2c02_colour_palette.png'
+locy = 4
+locx = 16
+hex_list = np.array([[f"${(i * locx + j):02X}" for j in range(locx)] for i in range(locy)]).reshape(locy,locx)
+        
+matrix_2c02 = make_template(image_path,locx,locy)
+
+# Apply the template palette to the test image
+#new_test, palette = apply_template(test, matrix_2c02, hex_list)
+#print(palette)
+
+#output_file = r'output.chr'
+#convert_to_hex(new_test, output_file)
 
 
 hex_palette_values =   [".byte $0f, $12, $23, $27",
@@ -418,8 +428,8 @@ sprites, flags_list = plot_sprites(sprite_info, xsize, ysize, bits, sprites_pale
 
 at = ["$23C2", "$23E0"]
 coloring = ["%01000000", "%00001100"]
-initial = "$23C0"
-attribute_table = process_attributes(initial, at, coloring)
+initial_attribute = "$23C0"
+attribute_table = process_attributes(initial_attribute, at, coloring)
 
 
 addresses = ["$206b", "$2157", "$2223", "$2352"]
@@ -428,10 +438,12 @@ addresses3 = ["$20f1", "$21a8", "$227a", "$2344", "$237c"]
 
 background_addresses = addresses + addresses2 + addresses3
 
-initial = "$2000"
-background = generate_background(initial, background_addresses, xsize, ysize, bits, attribute_table, background_palettes)
+initial_nametable = "$2000"
+background = generate_background(initial_nametable, background_addresses, xsize, ysize, bits, attribute_table, background_palettes)
 
 
 
-
-
+alltogether = sprites + background
+plt.imshow(alltogether)
+plt.title("Game Screen!")
+plt.show()
